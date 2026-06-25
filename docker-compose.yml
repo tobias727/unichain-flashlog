@@ -1,0 +1,19 @@
+services:
+  flashlog:
+    build: .
+    image: unichain-flashlog
+    container_name: unichain-flashlog
+    restart: unless-stopped
+    env_file: .env
+    stop_grace_period: 30s
+    volumes:
+      # Host path MUST be on the WSL2 ext4 filesystem (a path under your WSL
+      # home, e.g. ~/flashtape/data) — NOT under /mnt/c. Change the left side to
+      # an absolute path if ${HOME} is not set in your shell environment.
+      - ${HOME}/flashtape/data:/data
+    healthcheck:
+      test: ["CMD", "python", "-m", "healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
