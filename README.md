@@ -1,7 +1,7 @@
 # unichain-flashlog
 
 A small, robust 24/7 collector that captures the **Unichain Flashblocks**
-WebSocket stream and persists **every frame verbatim** as gzipped JSONL.
+WebSocket stream and persists as gzipped JSONL.
 
 > Part of a sub-block-resolution dataset for studying inter-flashblock arbitrage
 > and LVR. This repo is the Flashblocks capture half; market-data capture lives
