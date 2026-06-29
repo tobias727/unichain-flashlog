@@ -1,19 +1,48 @@
+# One collector per venue. Each service runs the same image but is pinned to a
+# venue via its own env vars (VENUE / CONNECTION_MODE / WS_URL / OUT_DIR) and
+# bind-mounts its own /data/<venue> subdir on the WSL2 ext4 filesystem.
+#
+# Per-venue WS URLs (incl. the Base provider key) come from .env — see
+# .env.example. Compose reads .env automatically for the ${...} substitutions
+# below; env_file then passes any optional shared tuning into both containers.
+
+x-flashlog-common: &flashlog-common
+  build: .
+  image: flashlog
+  restart: unless-stopped
+  env_file: .env
+  stop_grace_period: 30s
+  healthcheck:
+    test: ["CMD", "python", "-m", "healthcheck"]
+    interval: 60s
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+
 services:
-  flashlog:
-    build: .
-    image: unichain-flashlog
-    container_name: unichain-flashlog
-    restart: unless-stopped
-    env_file: .env
-    stop_grace_period: 30s
+  # Base (primary): provider WSS + eth_subscribe(newFlashblocks). Requires a
+  # node-provider key in BASE_WS_URL — mainnet.base.org has no WebSocket.
+  flashlog-base:
+    <<: *flashlog-common
+    container_name: flashlog-base
+    environment:
+      VENUE: base
+      CONNECTION_MODE: eth_subscribe
+      WS_URL: ${BASE_WS_URL}
+      OUT_DIR: /data/base
     volumes:
-      # Host path MUST be on the WSL2 ext4 filesystem (a path under your WSL
-      # home, e.g. ~/flashtape/data) — NOT under /mnt/c. Change the left side to
-      # an absolute path if ${HOME} is not set in your shell environment.
-      - ${HOME}/flashtape/data:/data
-    healthcheck:
-      test: ["CMD", "python", "-m", "healthcheck"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      # Host path MUST be on the WSL2 ext4 filesystem (under your WSL home),
+      # NOT under /mnt/c. Use an absolute path if ${HOME} is unset.
+      - ${HOME}/flashtape/data/base:/data/base
+
+  # Unichain (optional): direct sequencer raw_ws (brotli) stream — unchanged.
+  flashlog-unichain:
+    <<: *flashlog-common
+    container_name: flashlog-unichain
+    environment:
+      VENUE: unichain
+      CONNECTION_MODE: raw_ws
+      WS_URL: ${UNICHAIN_WS_URL:-wss://mainnet-flashblocks.unichain.org/ws}
+      OUT_DIR: /data/unichain
+    volumes:
+      - ${HOME}/flashtape/data/unichain:/data/unichain

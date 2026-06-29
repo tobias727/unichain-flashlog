@@ -121,6 +121,19 @@ def test_stale_file_from_crash_is_compressed_on_startup(tmp_path):
     writer.close()
 
 
+def test_file_prefix_names_files_per_venue(tmp_path):
+    # A venue-specific prefix must appear in the rotated/gzipped filename so two
+    # venues sharing a directory never collide.
+    writer = JsonlWriter(str(tmp_path), flush_every=1, file_prefix="flashblocks_base_")
+    writer.write(123, 456, '{"index":0}')
+    writer.close()
+    writer._compressor.shutdown(wait=True)
+
+    [gz] = list(tmp_path.glob("*.jsonl.gz"))
+    assert gz.name.startswith("flashblocks_base_")
+    assert json.loads(_read_lines(str(gz))[0])["raw"] == '{"index":0}'
+
+
 def test_retention_deletes_old_gz(tmp_path):
     old = tmp_path / "flashblocks_2020-01-01T00.jsonl.gz"
     with gzip.open(old, "wt", encoding="utf-8") as fh:

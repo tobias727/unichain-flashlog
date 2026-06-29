@@ -35,7 +35,9 @@ async def run() -> None:
     cfg = load_config()
     setup_logging(cfg.log_level)
     log.info(
-        "starting flashlog ws_url=%s out_dir=%s flush_every=%d",
+        "starting flashlog venue=%s mode=%s ws_url=%s out_dir=%s flush_every=%d",
+        cfg.venue,
+        cfg.connection_mode,
         cfg.ws_url,
         cfg.out_dir,
         cfg.flush_every,
@@ -45,6 +47,7 @@ async def run() -> None:
         cfg.out_dir,
         flush_every=cfg.flush_every,
         retention_days=cfg.retention_days,
+        file_prefix=cfg.file_prefix,
     )
     monitor = Monitor(
         cfg.out_dir,
@@ -54,6 +57,7 @@ async def run() -> None:
     )
     feed = FlashblockFeed(
         cfg.ws_url,
+        connection_mode=cfg.connection_mode,
         backoff_cap_s=cfg.backoff_cap_s,
         on_disconnect=monitor.on_disconnect,
     )

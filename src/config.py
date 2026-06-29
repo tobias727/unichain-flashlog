@@ -12,11 +12,18 @@ from dataclasses import dataclass
 # (wss://sepolia-flashblocks.unichain.org/ws).
 DEFAULT_WS_URL = "wss://mainnet-flashblocks.unichain.org/ws"
 
+# Connection models. "raw_ws" is the Unichain-style direct sequencer stream
+# (brotli-compressed binary diff frames). "eth_subscribe" is the Base-style path
+# through a node provider's WebSocket (plain JSON-RPC pubsub, newFlashblocks).
+CONNECTION_MODES = ("raw_ws", "eth_subscribe")
+
 
 @dataclass(frozen=True)
 class Config:
     """Immutable runtime configuration."""
 
+    venue: str
+    connection_mode: str
     ws_url: str
     out_dir: str
     flush_every: int
@@ -26,6 +33,12 @@ class Config:
     backoff_cap_s: float
     disk_min_free_mb: float
     retention_days: int | None
+
+    @property
+    def file_prefix(self) -> str:
+        """Output filename prefix, e.g. ``flashblocks_base_`` for venue ``base``."""
+
+        return f"flashblocks_{self.venue}_"
 
 
 def _get_str(name: str, default: str) -> str:
@@ -57,7 +70,15 @@ def _get_optional_int(name: str) -> int | None:
 def load_config() -> Config:
     """Build a :class:`Config` from the process environment."""
 
+    connection_mode = _get_str("CONNECTION_MODE", "raw_ws")
+    if connection_mode not in CONNECTION_MODES:
+        raise ValueError(
+            f"CONNECTION_MODE must be one of {CONNECTION_MODES}, got {connection_mode!r}"
+        )
+
     return Config(
+        venue=_get_str("VENUE", "unichain"),
+        connection_mode=connection_mode,
         ws_url=_get_str("WS_URL", DEFAULT_WS_URL),
         out_dir=_get_str("OUT_DIR", "/data"),
         flush_every=_get_int("FLUSH_EVERY", 50),

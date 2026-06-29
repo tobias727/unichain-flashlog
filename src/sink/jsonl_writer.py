@@ -6,7 +6,8 @@ Design goals: crash-safe by construction and never lose already-flushed data.
 * ``raw`` is stored verbatim as a STRING (the frame is not re-parsed or
   re-serialized) so the exact bytes round-trip:
   ``json.loads(json.loads(line)["raw"])``.
-* Files rotate hourly (UTC): ``flashblocks_YYYY-MM-DDTHH.jsonl``.
+* Files rotate hourly (UTC): ``<file_prefix>YYYY-MM-DDTHH.jsonl`` where
+  ``file_prefix`` carries the venue, e.g. ``flashblocks_base_``.
 * On rotation the previous file is gzipped (``.jsonl`` -> ``.jsonl.gz``) and the
   raw file removed. Compression runs on a background thread so capture never
   stalls.
@@ -44,10 +45,14 @@ class JsonlWriter:
         *,
         flush_every: int = 50,
         retention_days: Optional[int] = None,
+        file_prefix: str = _FILE_PREFIX,
     ) -> None:
         self._out_dir = out_dir
         self._flush_every = max(1, flush_every)
         self._retention_days = retention_days
+        # Per-venue filename prefix, e.g. ``flashblocks_base_``. Files are named
+        # ``<prefix><hour>.jsonl`` so different venues never collide in a shared dir.
+        self._file_prefix = file_prefix
 
         os.makedirs(self._out_dir, exist_ok=True)
 
@@ -104,7 +109,7 @@ class JsonlWriter:
             self._fh.close()
             self._fh = None
 
-        path = os.path.join(self._out_dir, f"{_FILE_PREFIX}{hour}.jsonl")
+        path = os.path.join(self._out_dir, f"{self._file_prefix}{hour}.jsonl")
         # Mode "a": resume an existing current-hour file after a restart.
         self._fh = open(path, "a", encoding="utf-8")  # pylint: disable=consider-using-with
         self._hour = hour
@@ -139,9 +144,9 @@ class JsonlWriter:
 
         current_hour = _hour_key(time.time_ns())
         for name in os.listdir(self._out_dir):
-            if not name.startswith(_FILE_PREFIX) or not name.endswith(".jsonl"):
+            if not name.startswith(self._file_prefix) or not name.endswith(".jsonl"):
                 continue
-            if name == f"{_FILE_PREFIX}{current_hour}.jsonl":
+            if name == f"{self._file_prefix}{current_hour}.jsonl":
                 continue
             self._compress_file(os.path.join(self._out_dir, name))
 
@@ -152,7 +157,7 @@ class JsonlWriter:
             return
         cutoff = time.time() - self._retention_days * 86400
         for name in os.listdir(self._out_dir):
-            if not name.startswith(_FILE_PREFIX) or not name.endswith(".jsonl.gz"):
+            if not name.startswith(self._file_prefix) or not name.endswith(".jsonl.gz"):
                 continue
             path = os.path.join(self._out_dir, name)
             try:

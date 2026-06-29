@@ -24,7 +24,7 @@ def main() -> int:
     cfg = load_config()
     max_age = float(os.environ.get("HEALTH_MAX_AGE_S", "120"))
     hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
-    path = os.path.join(cfg.out_dir, f"flashblocks_{hour}.jsonl")
+    path = os.path.join(cfg.out_dir, f"{cfg.file_prefix}{hour}.jsonl")
     try:
         age = time.time() - os.path.getmtime(path)
     except OSError:

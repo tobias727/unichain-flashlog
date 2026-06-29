@@ -1,11 +1,17 @@
 # unichain-flashlog
 
-A small, robust 24/7 collector that captures the **Unichain Flashblocks**
+A small, robust 24/7 collector that captures the **Unichain + Base Flashblocks**
 WebSocket stream and persists as gzipped JSONL.
 
 > Part of a sub-block-resolution dataset for studying inter-flashblock arbitrage
 > and LVR. This repo is the Flashblocks capture half; market-data capture lives
 > alongside it.
+
+> **Two connection models, one sink.** Unichain is collected from its public
+> sequencer stream directly (`raw_ws`, brotli-compressed). Base has no public
+> WebSocket for apps, so it is collected through a node provider via
+> `eth_subscribe("newFlashblocks")` (`eth_subscribe`, plain JSON). See
+> [Capturing Base flashblocks](#capturing-base-flashblocks).
 
 ## What this captures and why
 
@@ -25,8 +31,10 @@ the payload, so it keeps working even if Unichain changes the flashblock schema.
 
 ## Record schema
 
-One JSON object per line (JSONL). Files are hourly and gzipped:
-`flashblocks_YYYY-MM-DDTHH.jsonl.gz` (UTC).
+One JSON object per line (JSONL). Files are hourly and gzipped, prefixed with the
+venue: `flashblocks_<venue>_YYYY-MM-DDTHH.jsonl.gz` (UTC), e.g.
+`flashblocks_base_2026-06-29T14.jsonl.gz`. Each venue writes into its own
+`/data/<venue>` subdir.
 
 ```json
 {"t_wall_ns": 1750861457123456789, "t_mono_ns": 99887766554433, "raw": "<verbatim frame string>"}
@@ -58,14 +66,17 @@ The collector does not depend on any of this.
 > lands on the Linux ext4 filesystem.
 
 ```bash
-cp .env.example .env          # adjust WS_URL etc. if needed
-mkdir -p ~/flashtape/data     # host data dir on WSL ext4 (matches compose mount)
-docker compose up -d --build
-docker compose logs -f        # watch heartbeats / reconnects
+cp .env.example .env              # then set BASE_WS_URL to your provider WSS endpoint
+mkdir -p ~/flashtape/data/base ~/flashtape/data/unichain   # host dirs on WSL ext4
+docker compose up -d --build      # starts flashlog-base and flashlog-unichain
+docker compose logs -f            # watch heartbeats / reconnects (both services)
 ```
 
-You should see a growing `flashblocks_<hour>.jsonl` appear in `~/flashtape/data`,
-and on each hour boundary the previous file becomes `…​.jsonl.gz`.
+You should see a growing `flashblocks_base_<hour>.jsonl` appear in
+`~/flashtape/data/base` (and `flashblocks_unichain_<hour>.jsonl` in
+`~/flashtape/data/unichain`), and on each hour boundary the previous file becomes
+`…​.jsonl.gz`. To run only one venue, e.g. Base:
+`docker compose up -d flashlog-base`.
 
 Stop gracefully (flush + fsync + gzip current file):
 
@@ -75,9 +86,10 @@ docker compose down           # or: docker compose stop
 
 ### Where the data lands
 
-- Inside the container: `/data`.
-- On the host: `~/flashtape/data` on the **WSL2 ext4** filesystem (the compose
-  mount is `${HOME}/flashtape/data:/data`).
+- Inside each container: `/data/<venue>` (`/data/base`, `/data/unichain`).
+- On the host: `~/flashtape/data/<venue>` on the **WSL2 ext4** filesystem (the
+  compose mounts are `${HOME}/flashtape/data/base:/data/base` and
+  `${HOME}/flashtape/data/unichain:/data/unichain`).
 - **Do not** point this at `/mnt/c/...` — the Windows 9P bridge is slow and has
   file-locking quirks that can corrupt append/rotate.
 - Reach the files from Windows via the UNC path
@@ -93,12 +105,16 @@ default first WSL Ubuntu user, so it can write to your WSL home directory. If
 
 ## Configuration (env)
 
-All set in `.env` (see `.env.example`):
+Per-venue identity (`VENUE`, `CONNECTION_MODE`, `WS_URL`, `OUT_DIR`) is set per
+service in `docker-compose.yml`; the WS URLs (incl. the Base provider key) come
+from `.env` (see `.env.example`). The rest are optional shared tuning.
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `WS_URL` | `wss://mainnet-flashblocks.unichain.org/ws` | Flashblocks stream. Swap for a paid Alchemy/QuickNode endpoint or the sepolia stream. |
-| `OUT_DIR` | `/data` | Output dir inside the container. |
+| `VENUE` | `unichain` | Names the output files (`flashblocks_<venue>_<hour>.jsonl`). Set per service. |
+| `CONNECTION_MODE` | `raw_ws` | `raw_ws` = direct sequencer stream, brotli (Unichain). `eth_subscribe` = provider WS + `newFlashblocks` (Base). |
+| `WS_URL` | `wss://mainnet-flashblocks.unichain.org/ws` | Flashblocks endpoint. For Base, a provider WSS (set via `BASE_WS_URL`). |
+| `OUT_DIR` | `/data` | Output dir inside the container (per venue, e.g. `/data/base`). |
 | `FLUSH_EVERY` | `50` | `fsync` to disk every N records (and on rotation/shutdown). |
 | `STALL_S` | `5` | Warn if no frame arrives for this many seconds. |
 | `HEARTBEAT_S` | `30` | Heartbeat log interval (cumulative count + rate). |
@@ -106,6 +122,21 @@ All set in `.env` (see `.env.example`):
 | `DISK_MIN_FREE_MB` | `500` | Warn when free space on `OUT_DIR` drops below this. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR`. |
 | `RETENTION_DAYS` | *(unset)* | If set, delete `*.jsonl.gz` older than N days. Unset = keep everything. |
+
+## Capturing Base flashblocks
+
+Base needs a **node provider's WebSocket endpoint** — there is no usable public
+one. The public Base RPC endpoints (`mainnet.base.org` / `sepolia.base.org`) are
+**HTTP-only and expose no WebSocket**, and the raw sequencer flashblocks stream
+(`wss://mainnet.flashblocks.base.org/ws`) is documented as *node-operators only,
+not for applications*. So we collect Base through a Flashblocks-aware provider
+that supports `eth_subscribe("newFlashblocks")` — get a WSS key from **Dwellir,
+Alchemy, or QuickNode** (any Base-mainnet plan that advertises Flashblocks), and
+put the full `wss://…` URL in `BASE_WS_URL` in your `.env`. On connect the
+collector sends `{"jsonrpc":"2.0","id":1,"method":"eth_subscribe","params":["newFlashblocks"]}`,
+captures each notification's `params.result` (the Rollup-Boost frame) verbatim,
+and re-subscribes automatically after any reconnect. (Unichain, by contrast, has
+a public sequencer stream and needs no key.)
 
 ## Robustness / how it survives kills
 
@@ -156,7 +187,7 @@ SELECT
     json_extract(raw, '$.index')                    AS flashblock_index,
     json_extract_string(raw, '$.base.block_number') AS base_block_number_hex,
     json_extract(raw, '$.metadata.block_number')    AS block_number
-FROM read_json_auto('~/flashtape/data/flashblocks_*.jsonl.gz')
+FROM read_json_auto('~/flashtape/data/base/flashblocks_base_*.jsonl.gz')
 ORDER BY t_wall_ns
 LIMIT 20;
 ```
@@ -168,7 +199,7 @@ on the fly. `base` is null except on `index = 0`. To decode the hex block number
 SELECT
     CAST(json_extract(raw, '$.index') AS BIGINT) AS flashblock_index,
     from_hex(replace(json_extract_string(raw, '$.base.block_number'), '0x', '')) AS base_block_bytes
-FROM read_json_auto('~/flashtape/data/flashblocks_*.jsonl.gz')
+FROM read_json_auto('~/flashtape/data/base/flashblocks_base_*.jsonl.gz')
 WHERE json_extract(raw, '$.index') = 0;
 ```
 

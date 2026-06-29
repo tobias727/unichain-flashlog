@@ -35,6 +35,7 @@ class WebSocketManager:
         backoff_cap_s: float = 30.0,
         ping_interval_s: float = 20.0,
         ping_timeout_s: float = 20.0,
+        subscribe_payload: str | None = None,
         on_connect=None,
         on_disconnect=None,
     ) -> None:
@@ -43,6 +44,10 @@ class WebSocketManager:
         self._backoff_cap_s = backoff_cap_s
         self._ping_interval_s = ping_interval_s
         self._ping_timeout_s = ping_timeout_s
+        # JSON-RPC handshake text sent immediately after every (re)connect, e.g.
+        # the eth_subscribe request for the Base provider path. ``None`` for the
+        # Unichain raw_ws stream, which needs no handshake.
+        self._subscribe_payload = subscribe_payload
         self._on_connect = on_connect
         self._on_disconnect = on_disconnect
 
@@ -66,6 +71,11 @@ class WebSocketManager:
                 ) as ws:
                     log.info("connected ws_url=%s", self._url)
                     backoff = self._backoff_base_s  # reset after a clean connect
+                    # Re-send the subscribe handshake on every (re)connect so the
+                    # eth_subscribe path resubscribes after any drop.
+                    if self._subscribe_payload is not None:
+                        await ws.send(self._subscribe_payload)
+                        log.info("sent subscribe handshake")
                     if self._on_connect is not None:
                         self._on_connect()
                     async for message in ws:
